@@ -90,6 +90,7 @@ type StrategyParameters struct {
 	NodeFit                           bool
 	IncludePreferNoSchedule           bool
 	ExcludedTaints                    []string
+	Cordon                            bool
 }
 
 type Percentage float64

@@ -18,10 +18,12 @@ package nodeutilization
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/types"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -124,6 +126,17 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 	// Sort the nodes by the usage in ascending order
 	sortNodesByUsage(sourceNodes, true)
 
+	// cordon nodes
+	if strategy.Params != nil && strategy.Params.Cordon {
+		for _, node := range sourceNodes {
+			err = cordonNode(ctx, client, node.node)
+
+			if err != nil {
+				klog.ErrorS(err, "Failed to cordon node", "node", klog.KObj(node.node))
+			}
+		}
+	}
+
 	evictPodsFromSourceNodes(
 		ctx,
 		sourceNodes,
@@ -133,6 +146,21 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 		resourceNames,
 		"HighNodeUtilization",
 		continueEvictionCond)
+
+}
+
+func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) error {
+	klog.InfoS("Cordon node", "node", klog.KObj(node))
+
+	patch := struct {
+		Spec struct {
+			Unschedulable bool `json:"unschedulable"`
+		} `json:"spec"`
+	}{}
+	patch.Spec.Unschedulable = true
+
+	patchJson, _ := json.Marshal(patch)
+	return client.NodeV1().RESTClient().Patch(types.MergePatchType).Name(node.Name).Body(patchJson).Do(ctx).Error()
 
 }
 
