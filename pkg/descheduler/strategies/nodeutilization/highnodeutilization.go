@@ -162,7 +162,7 @@ func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) 
 
 	patchJson, _ := json.Marshal(patch)
 	options := metav1.PatchOptions{}
-	return client.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, patchJson, options).Error()
+	return client.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, []byte(patchJson), options).Error()
 }
 
 func validateHighUtilizationStrategyConfig(thresholds, targetThresholds api.ResourceThresholds) error {
