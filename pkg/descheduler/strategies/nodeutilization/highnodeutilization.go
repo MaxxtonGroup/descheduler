@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	nodev1 "k8s.io/api/node/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
@@ -160,7 +161,7 @@ func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) 
 	patch.Spec.Unschedulable = true
 
 	patchJson, _ := json.Marshal(patch)
-	return client.NodeV1().RESTClient().Patch(types.MergePatchType).Name(node.Name).Body(patchJson).Do(ctx).Error()
+	return client.NodeV1().RESTClient().Patch(types.StrategicMergePatchType).Name(node.Name).Body(patchJson).Do(ctx).Error()
 
 }
 
