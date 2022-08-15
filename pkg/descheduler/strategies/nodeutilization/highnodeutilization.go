@@ -161,7 +161,8 @@ func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) 
 	patch.Spec.Unschedulable = true
 
 	patchJson, _ := json.Marshal(patch)
-	return client.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, patchJson).Error()
+	options := metav1.PatchOptions{}
+	return client.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, patchJson, options).Error()
 }
 
 func validateHighUtilizationStrategyConfig(thresholds, targetThresholds api.ResourceThresholds) error {
