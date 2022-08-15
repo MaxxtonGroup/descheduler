@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -149,7 +150,7 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 
 }
 
-func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) error {
+func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) error {x
 	klog.InfoS("Cordon node", "node", klog.KObj(node))
 
 	patch := struct {
