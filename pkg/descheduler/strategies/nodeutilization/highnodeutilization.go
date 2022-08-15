@@ -162,7 +162,7 @@ func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) 
 
 	patchJson, _ := json.Marshal(patch)
 	options := metav1.PatchOptions{}
-	result, error := client.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, patchJson, options)
+	_, error := client.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, patchJson, options)
 	return error
 }
 
