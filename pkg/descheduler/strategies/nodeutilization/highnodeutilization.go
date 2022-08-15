@@ -150,7 +150,7 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 
 }
 
-func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) error {x
+func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) error {
 	klog.InfoS("Cordon node", "node", klog.KObj(node))
 
 	patch := struct {
