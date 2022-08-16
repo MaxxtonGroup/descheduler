@@ -67,6 +67,18 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 	setDefaultForThresholds(thresholds, targetThresholds)
 	resourceNames := getResourceNames(targetThresholds)
 
+	func CurrentNode(node *v1.Node) bool {
+		for i := range node {
+
+		}
+	}	
+//	for _, item range nodes {
+//	for i := 0; i < clientRetryCount; i++ {
+
+//	}
+	// {
+	// node x = currentNode 
+
 	// check if nodes are under- or overutilized, ignore unscheduable nodes
 	sourceNodes, highNodes := classifyNodes(
 		getNodeUsage(nodes, resourceNames, getPodsAssignedToNode),
