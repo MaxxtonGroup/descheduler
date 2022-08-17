@@ -130,11 +130,11 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 
 		// stop if the total available usage has dropped to zero, then no more pods can be scheduled
 		continueEvictionCond := func(nodeInfo NodeInfo, totalAvailableUsage map[v1.ResourceName]*resource.Quantity) bool {
-			for name := range totalAvailableUsage {
-				if totalAvailableUsage[name].CmpInt64(0) < 1 {
-					return false
-				}
-			}
+			// for name := range totalAvailableUsage {
+			// 	if totalAvailableUsage[name].CmpInt64(0) < 1 {
+			// 		return false
+			// 	}
+			// }
 
 			return true
 		}
