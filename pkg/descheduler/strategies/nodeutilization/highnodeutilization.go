@@ -140,32 +140,40 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 		}
 
 		// sort the nodes by the usage in ascending order
-		sortNodesByUsage(sourceNodes, true)
+		sortNodesByUsage(sourceNodes, true) 
 
 		// check if the currentNode we are on in the range is present in the sourceNode list
-		if sourceNodes[i] != nil {
-			// cordon nodes
-			if strategy.Params != nil && strategy.Params.Cordon {
-				for _, node := range sourceNodes {
-					err = cordonNode(ctx, client, node.node)
-
-					if err != nil {
-						klog.ErrorS(err, "Failed to cordon node", "node", klog.KObj(node.node))
-					}
+		func contains(s []node, n node) bool {
+			for _, v := range node {
+				if v.name == n.name {
+					return true
 				}
 			}
-
-			// start eviction of pods fom the nodes  
-			evictPodsFromSourceNodes(
-				ctx,
-				sourceNodes,
-				highNodes,
-				podEvictor,
-				evictable.IsEvictable,
-				resourceNames,
-				"HighNodeUtilization",
-				continueEvictionCond)
+			return false
 		}
+
+		// cordon nodes
+		if strategy.Params != nil && strategy.Params.Cordon {
+			for _, node := range sourceNodes {
+				err = cordonNode(ctx, client, node.node)
+
+				if err != nil {
+					klog.ErrorS(err, "Failed to cordon node", "node", klog.KObj(node.node))
+				}
+			}
+		}
+
+		// start eviction of pods fom the nodes  
+		evictPodsFromSourceNodes(
+			ctx,
+			sourceNodes,
+			highNodes,
+			podEvictor,
+			evictable.IsEvictable,
+			resourceNames,
+			"HighNodeUtilization",
+			continueEvictionCond)
+
 		time.Sleep(120 * time.Second)
 		klog.V(1).InfoS("Sleeping for two minutes before continuing on the next node")
 	}
