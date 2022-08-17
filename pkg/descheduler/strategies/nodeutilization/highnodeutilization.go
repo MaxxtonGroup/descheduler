@@ -143,40 +143,44 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 		sortNodesByUsage(sourceNodes, true) 
 
 		// check if the currentNode we are on in the range is present in the sourceNode list
-		func contains(s []node, n node) bool {
-			for _, v := range node {
-				if v.name == n.name {
-					return true
-				}
-			}
-			return false
-		}
-
-		// cordon nodes
-		if strategy.Params != nil && strategy.Params.Cordon {
-			for _, node := range sourceNodes {
-				err = cordonNode(ctx, client, node.node)
+		sliceResult, err := slice(sourceNodes, currentNode)
+		if (err == nil) {
+			
+			// cordon nodes
+			if strategy.Params != nil && strategy.Params.Cordon {
+				// for _, node := range sourceNodes {
+				err = cordonNode(ctx, client, currentNode)
 
 				if err != nil {
-					klog.ErrorS(err, "Failed to cordon node", "node", klog.KObj(node.node))
+					klog.ErrorS(err, "Failed to cordon node", "node", klog.KObj(currentNode))
 				}
+				// }
 			}
+
+			// start eviction of pods fom the nodes  
+			evictPodsFromSourceNodes(
+				ctx,
+				[]NodeInfo{sliceResult},
+				highNodes,
+				podEvictor,
+				evictable.IsEvictable,
+				resourceNames,
+				"HighNodeUtilization",
+				continueEvictionCond)
+
+			time.Sleep(120 * time.Second)
+			klog.V(1).InfoS("Sleeping for two minutes before continuing on the next node")
 		}
-
-		// start eviction of pods fom the nodes  
-		evictPodsFromSourceNodes(
-			ctx,
-			sourceNodes,
-			highNodes,
-			podEvictor,
-			evictable.IsEvictable,
-			resourceNames,
-			"HighNodeUtilization",
-			continueEvictionCond)
-
-		time.Sleep(120 * time.Second)
-		klog.V(1).InfoS("Sleeping for two minutes before continuing on the next node")
 	}
+}
+
+func slice(s []NodeInfo, n *v1.Node) (nodeInfo NodeInfo, err error) {
+	for _, v := range s {
+		if v.node.Name == n.Name {
+			return v, nil
+		}
+	}
+	return NodeInfo{}, fmt.Errorf("Node not found")
 }
 
 func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) error {
