@@ -168,8 +168,8 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 				"HighNodeUtilization",
 				continueEvictionCond)
 
-			time.Sleep(120 * time.Second)
 			klog.V(1).InfoS("Sleeping for two minutes before continuing on the next node")
+			time.Sleep(120 * time.Second)
 		}
 	}
 }
