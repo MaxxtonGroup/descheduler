@@ -72,7 +72,18 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 	for i := 0; i < totalNodes; i++ {
 		currentNode := nodes[i]
 
-		// classifies the nodes into sourceNodes and highNode groups
+		// stop if the total available usage has dropped to zero, then no more pods can be scheduled
+		continueEvictionCond := func(nodeInfo NodeInfo, totalAvailableUsage map[v1.ResourceName]*resource.Quantity) bool {
+			for name := range totalAvailableUsage {
+				  if totalAvailableUsage[name].CmpInt64(0) < 1 {
+					  return false
+				  }
+			  }
+ 
+			 return true
+		 }
+
+		// classifies the nodes into sourceNodes and highNode groups based on resources requested
 		sourceNodes, highNodes := classifyNodes(
 			getNodeUsage(nodes, resourceNames, getPodsAssignedToNode),
 			getNodeThresholds(nodes, thresholds, targetThresholds, resourceNames, getPodsAssignedToNode, false),
@@ -128,17 +139,6 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 		// check if pods are evictable and can also fit the nodes
 		evictable := podEvictor.Evictable(evictions.WithPriorityThreshold(thresholdPriority), evictions.WithNodeFit(nodeFit))
 
-		// stop if the total available usage has dropped to zero, then no more pods can be scheduled
-		continueEvictionCond := func(nodeInfo NodeInfo, totalAvailableUsage map[v1.ResourceName]*resource.Quantity) bool {
-			// for name := range totalAvailableUsage {
-			// 	if totalAvailableUsage[name].CmpInt64(0) < 1 {
-			// 		return false
-			// 	}
-			// }
-
-			return true
-		}
-
 		// sort the nodes by the usage in ascending order
 		sortNodesByUsage(sourceNodes, true) 
 
@@ -169,7 +169,8 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 				continueEvictionCond)
 
 			klog.V(1).InfoS("Sleeping for two minutes before continuing on the next node")
-			time.Sleep(120 * time.Second)
+			// Sleeping 15 minutes to make sure evicted pods gets fully up before the next drain starts
+			time.Sleep(900 * time.Second)
 		}
 	}
 }
