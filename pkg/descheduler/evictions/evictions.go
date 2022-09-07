@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
 	policy "k8s.io/api/policy/v1beta1"
@@ -181,15 +182,21 @@ func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, poli
 		},
 		DeleteOptions: deleteOptions,
 	}
-	err := client.PolicyV1beta1().Evictions(eviction.Namespace).Evict(ctx, eviction)
 
-	if apierrors.IsTooManyRequests(err) {
-		return fmt.Errorf("error when evicting pod (ignoring) %q: %v", pod.Name, err)
+	deadline := time.Now().Add(720 * time.Second)
+	for { 
+		err := client.PolicyV1beta1().Evictions(eviction.Namespace).Evict(ctx, eviction)
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("pod not found when evicting %q: %v", pod.Name, err)
+			break
+		}
+		if apierrors.IsTooManyRequests(err) || time.Now().After(deadline) {
+			return fmt.Errorf("error when evicting pod (ignoring) %q: %v", pod.Name, err)
+			break			
+		}
+		time.Sleep(300 * time.Second)
 	}
-	if apierrors.IsNotFound(err) {
-		return fmt.Errorf("pod not found when evicting %q: %v", pod.Name, err)
-	}
-	return err
+	return fmt.Errorf("Ignoring pod %q due to problems evicting after 1 hour", pod.Name)
 }
 
 type Options struct {
