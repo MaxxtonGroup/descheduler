@@ -190,13 +190,17 @@ func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, poli
 			return fmt.Errorf("pod not found when evicting %q: %v", pod.Name, err)
 			break
 		}
-		if apierrors.IsTooManyRequests(err) || time.Now().After(deadline) {
+		if apierrors.IsTooManyRequests(err) && time.Now().After(deadline) {
 			return fmt.Errorf("error when evicting pod (ignoring) %q: %v", pod.Name, err)
 			break			
 		}
+		if err == nil {
+			break
+		}
+		klog.V(1).InfoS("Still waiting on %q", pod.Name)
 		time.Sleep(300 * time.Second)
 	}
-	return fmt.Errorf("Ignoring pod %q due to problems evicting after 1 hour", pod.Name)
+	return fmt.Errorf("Ready to evict %q", pod.Name)
 }
 
 type Options struct {
