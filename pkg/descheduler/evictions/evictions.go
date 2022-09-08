@@ -185,7 +185,7 @@ func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, curr
 		DeleteOptions: deleteOptions,
 	}
 
-	deadline := time.Now().Add(720 * time.Second)
+	deadline := time.Now().Add(1800 * time.Second)
 	for { 
 		err := client.PolicyV1beta1().Evictions(eviction.Namespace).Evict(ctx, eviction)
 		if apierrors.IsNotFound(err) {
@@ -203,8 +203,8 @@ func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, curr
 		if err == nil {
 			break
 		}
-		klog.V(1).InfoS("Still waiting on %q", pod.Name)
-		time.Sleep(300 * time.Second)
+		klog.V(1).InfoS("Retrying to remove", "pod", klog.KObj(pod))
+		time.Sleep(60 * time.Second)
 	}
 	return fmt.Errorf("Ready to evict %q", pod.Name)
 }
