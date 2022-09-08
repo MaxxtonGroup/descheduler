@@ -200,7 +200,7 @@ func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, poli
 		klog.V(1).InfoS("Still waiting on %q", pod.Name)
 		time.Sleep(300 * time.Second)
 	}
-	return err
+	return fmt.Errorf("Ready to evict %q", pod.Name)
 }
 
 type Options struct {
