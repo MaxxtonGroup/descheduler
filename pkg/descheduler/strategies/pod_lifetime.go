@@ -105,7 +105,7 @@ func PodLifeTime(ctx context.Context, client clientset.Interface, strategy api.D
 
 		pods := listOldPodsOnNode(node.Name, getPodsAssignedToNode, podFilter, *strategy.Params.PodLifeTime.MaxPodLifeTimeSeconds)
 		for _, pod := range pods {
-			success, err := podEvictor.EvictPod(ctx, pod, node, "PodLifeTime")
+			success, _, err := podEvictor.EvictPod(ctx, pod, node, "PodLifeTime")
 			if success {
 				klog.V(1).InfoS("Evicted pod because it exceeded its lifetime", "pod", klog.KObj(pod), "maxPodLifeTime", *strategy.Params.PodLifeTime.MaxPodLifeTimeSeconds)
 			}

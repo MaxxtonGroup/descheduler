@@ -20,12 +20,15 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
+	"encoding/json"
 
 	v1 "k8s.io/api/core/v1"
 	policy "k8s.io/api/policy/v1beta1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/errors"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -118,7 +121,7 @@ func (pe *PodEvictor) TotalEvicted() uint {
 // EvictPod returns non-nil error only when evicting a pod on a node is not
 // possible (due to maxPodsToEvictPerNode constraint). Success is true when the pod
 // is evicted on the server side.
-func (pe *PodEvictor) EvictPod(ctx context.Context, pod *v1.Pod, node *v1.Node, strategy string, reasons ...string) (bool, error) {
+func (pe *PodEvictor) EvictPod(ctx context.Context, pod *v1.Pod, node *v1.Node, strategy string, reasons ...string) (bool, bool, error) {
 	reason := strategy
 	if len(reasons) > 0 {
 		reason += " (" + strings.Join(reasons, ", ") + ")"
@@ -127,24 +130,24 @@ func (pe *PodEvictor) EvictPod(ctx context.Context, pod *v1.Pod, node *v1.Node, 
 		if pe.metricsEnabled {
 			metrics.PodsEvicted.With(map[string]string{"result": "maximum number of pods per node reached", "strategy": strategy, "namespace": pod.Namespace, "node": node.Name}).Inc()
 		}
-		return false, fmt.Errorf("Maximum number %v of evicted pods per %q node reached", *pe.maxPodsToEvictPerNode, node.Name)
+		return false, false, fmt.Errorf("Maximum number %v of evicted pods per %q node reached", *pe.maxPodsToEvictPerNode, node.Name)
 	}
 
 	if pe.maxPodsToEvictPerNamespace != nil && pe.namespacePodCount[pod.Namespace]+1 > *pe.maxPodsToEvictPerNamespace {
 		if pe.metricsEnabled {
 			metrics.PodsEvicted.With(map[string]string{"result": "maximum number of pods per namespace reached", "strategy": strategy, "namespace": pod.Namespace, "node": node.Name}).Inc()
 		}
-		return false, fmt.Errorf("Maximum number %v of evicted pods per %q namespace reached", *pe.maxPodsToEvictPerNamespace, pod.Namespace)
+		return false, false, fmt.Errorf("Maximum number %v of evicted pods per %q namespace reached", *pe.maxPodsToEvictPerNamespace, pod.Namespace)
 	}
 
-	err := evictPod(ctx, pe.client, pod, pe.policyGroupVersion)
+	eviction, err := evictPod(ctx, pe.client, pod, node, pe.policyGroupVersion)
 	if err != nil {
 		// err is used only for logging purposes
 		klog.ErrorS(err, "Error evicting pod", "pod", klog.KObj(pod), "reason", reason)
 		if pe.metricsEnabled {
 			metrics.PodsEvicted.With(map[string]string{"result": "error", "strategy": strategy, "namespace": pod.Namespace, "node": node.Name}).Inc()
 		}
-		return false, nil
+		return false, eviction, nil
 	}
 
 	pe.nodepodCount[node]++
@@ -164,10 +167,10 @@ func (pe *PodEvictor) EvictPod(ctx context.Context, pod *v1.Pod, node *v1.Node, 
 		r := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "sigs.k8s.io.descheduler"})
 		r.Event(pod, v1.EventTypeNormal, "Descheduled", fmt.Sprintf("pod evicted by sigs.k8s.io/descheduler%s", reason))
 	}
-	return true, nil
+	return true, false, nil
 }
 
-func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, policyGroupVersion string) error {
+func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, currentNode *v1.Node, policyGroupVersion string) (bool, error) {
 	deleteOptions := &metav1.DeleteOptions{}
 	// GracePeriodSeconds ?
 	eviction := &policy.Eviction{
@@ -181,15 +184,45 @@ func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, poli
 		},
 		DeleteOptions: deleteOptions,
 	}
-	err := client.PolicyV1beta1().Evictions(eviction.Namespace).Evict(ctx, eviction)
 
-	if apierrors.IsTooManyRequests(err) {
-		return fmt.Errorf("error when evicting pod (ignoring) %q: %v", pod.Name, err)
+	deadline := time.Now().Add(1800 * time.Second)
+	for { 
+		err := client.PolicyV1beta1().Evictions(eviction.Namespace).Evict(ctx, eviction)
+		if apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("pod not found when evicting %q: %v", pod.Name, err)
+			break
+		}
+		if apierrors.IsTooManyRequests(err) && time.Now().After(deadline) {
+			err = uncordonNode(ctx, client, currentNode)
+			if err != nil {
+				klog.ErrorS(err, "Failed to uncordon node", "node", klog.KObj(currentNode))
+			}
+			return true, fmt.Errorf("Not possible to evict pod %q. Node is now uncordon again.", pod.Name, err)
+			break
+		}
+		if err == nil {
+			break
+		}
+		klog.V(1).InfoS("Retrying to remove", "pod", klog.KObj(pod))
+		time.Sleep(60 * time.Second)
 	}
-	if apierrors.IsNotFound(err) {
-		return fmt.Errorf("pod not found when evicting %q: %v", pod.Name, err)
-	}
-	return err
+	return false, fmt.Errorf("Ready to evict %q", pod.Name)
+}
+
+func uncordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) error {
+	klog.InfoS("Uncordoning node", "node", klog.KObj(node))
+
+	patch := struct {
+		Spec struct {
+			Unschedulable bool `json:"unschedulable"`
+		} `json:"spec"`
+	}{}
+	patch.Spec.Unschedulable = false
+
+	patchJson, _ := json.Marshal(patch)
+	options := metav1.PatchOptions{}
+	_, error := client.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, patchJson, options)
+	return error
 }
 
 type Options struct {

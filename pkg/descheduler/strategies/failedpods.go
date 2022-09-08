@@ -80,7 +80,7 @@ func RemoveFailedPods(
 				continue
 			}
 
-			if _, err = podEvictor.EvictPod(ctx, pods[i], node, "FailedPod"); err != nil {
+			if _, _, err = podEvictor.EvictPod(ctx, pods[i], node, "FailedPod"); err != nil {
 				klog.ErrorS(err, "Error evicting pod", "pod", klog.KObj(pod))
 				break
 			}
