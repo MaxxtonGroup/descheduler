@@ -144,6 +144,7 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 
 		// check if the currentNode we are on in the range is present in the sourceNode list
 		sliceResult, err := slice(sourceNodes, currentNode)
+		
 		if (err == nil) {
 			
 			// cordon nodes
