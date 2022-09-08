@@ -168,7 +168,7 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 				"HighNodeUtilization",
 				continueEvictionCond)
 
-			klog.V(1).InfoS("Sleeping for two minutes before continuing on the next node")
+			klog.V(1).InfoS("Sleeping for 15 minutes before continuing on the next node")
 			// Sleeping 15 minutes to make sure evicted pods gets fully up before the next drain starts
 			time.Sleep(900 * time.Second)
 		}
