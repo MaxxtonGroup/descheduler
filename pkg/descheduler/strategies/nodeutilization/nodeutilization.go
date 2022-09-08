@@ -309,18 +309,21 @@ func evictPods(
 	if continueEviction(nodeInfo, totalAvailableUsage) {
 		for _, pod := range inputPods {
 			if !utils.PodToleratesTaints(pod, taintsOfLowNodes) {
-				klog.V(3).InfoS("Skipping eviction for pod, doesn't tolerate node taint", "pod", klog.KObj(pod))
+				klog.V(1).InfoS("Skipping eviction for pod, doesn't tolerate node taint", "pod", klog.KObj(pod))
 				continue
 			}
 
-			success, err := podEvictor.EvictPod(ctx, pod, nodeInfo.node, strategy)
+			success, eviction, err := podEvictor.EvictPod(ctx, pod, nodeInfo.node, strategy)
+			if eviction {
+				break
+			}
 			if err != nil {
 				klog.ErrorS(err, "Error evicting pod", "pod", klog.KObj(pod))
 				break
 			}
 
 			if success {
-				klog.V(3).InfoS("Evicted pods", "pod", klog.KObj(pod), "err", err)
+				klog.V(1).InfoS("Evicted pods", "pod", klog.KObj(pod), "err", err)
 
 				for name := range totalAvailableUsage {
 					if name == v1.ResourcePods {
@@ -345,7 +348,7 @@ func evictPods(
 					}
 				}
 
-				klog.V(3).InfoS("Updated node usage", keysAndValues...)
+				klog.V(1).InfoS("Updated node usage", keysAndValues...)
 				// check if pods can be still evicted
 				if !continueEviction(nodeInfo, totalAvailableUsage) {
 					break
