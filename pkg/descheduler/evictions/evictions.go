@@ -21,12 +21,14 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"encoding/json"
 
 	v1 "k8s.io/api/core/v1"
 	policy "k8s.io/api/policy/v1beta1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/errors"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -138,7 +140,7 @@ func (pe *PodEvictor) EvictPod(ctx context.Context, pod *v1.Pod, node *v1.Node, 
 		return false, fmt.Errorf("Maximum number %v of evicted pods per %q namespace reached", *pe.maxPodsToEvictPerNamespace, pod.Namespace)
 	}
 
-	err := evictPod(ctx, pe.client, pod, pe.policyGroupVersion)
+	err := evictPod(ctx, pe.client, pod, node, pe.policyGroupVersion)
 	if err != nil {
 		// err is used only for logging purposes
 		klog.ErrorS(err, "Error evicting pod", "pod", klog.KObj(pod), "reason", reason)
@@ -168,7 +170,7 @@ func (pe *PodEvictor) EvictPod(ctx context.Context, pod *v1.Pod, node *v1.Node, 
 	return true, nil
 }
 
-func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, policyGroupVersion string) error {
+func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, currentNode *v1.Node, policyGroupVersion string) error {
 	deleteOptions := &metav1.DeleteOptions{}
 	// GracePeriodSeconds ?
 	eviction := &policy.Eviction{
@@ -191,7 +193,11 @@ func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, poli
 			break
 		}
 		if apierrors.IsTooManyRequests(err) && time.Now().After(deadline) {
-			return fmt.Errorf("error when evicting pod (ignoring) %q: %v", pod.Name, err)
+			err = uncordonNode(ctx, client, currentNode)
+			if err != nil {
+				klog.ErrorS(err, "Failed to uncordon node", "node", klog.KObj(currentNode))
+			}
+			return fmt.Errorf("error when evicting pod (ignoring) %q: %v. Node is now uncordon again.", pod.Name, err)
 			break			
 		}
 		if err == nil {
@@ -201,6 +207,22 @@ func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, poli
 		time.Sleep(300 * time.Second)
 	}
 	return fmt.Errorf("Ready to evict %q", pod.Name)
+}
+
+func uncordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) error {
+	klog.InfoS("Uncordoning node", "node", klog.KObj(node))
+
+	patch := struct {
+		Spec struct {
+			Unschedulable bool `json:"unschedulable"`
+		} `json:"spec"`
+	}{}
+	patch.Spec.Unschedulable = false
+
+	patchJson, _ := json.Marshal(patch)
+	options := metav1.PatchOptions{}
+	_, error := client.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, patchJson, options)
+	return error
 }
 
 type Options struct {

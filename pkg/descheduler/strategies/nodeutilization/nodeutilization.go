@@ -273,7 +273,7 @@ func evictPodsFromSourceNodes(
 		}
 	}
 
-	klog.V(1).InfoS("Total capacity to be moved", keysAndValues...)
+	// klog.V(1).InfoS("Total capacity to be moved", keysAndValues...)
 
 	for _, node := range sourceNodes {
 
