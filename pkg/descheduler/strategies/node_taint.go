@@ -119,7 +119,7 @@ func RemovePodsViolatingNodeTaints(ctx context.Context, client clientset.Interfa
 				taintFilterFnc,
 			) {
 				klog.V(2).InfoS("Not all taints with NoSchedule effect are tolerated after update for pod on node", "pod", klog.KObj(pods[i]), "node", klog.KObj(node))
-				if _, err := podEvictor.EvictPod(ctx, pods[i], node, "NodeTaint"); err != nil {
+				if _, _, err := podEvictor.EvictPod(ctx, pods[i], node, "NodeTaint"); err != nil {
 					klog.ErrorS(err, "Error evicting pod")
 					break
 				}

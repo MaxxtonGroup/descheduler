@@ -99,7 +99,7 @@ func RemovePodsViolatingInterPodAntiAffinity(ctx context.Context, client clients
 		totalPods := len(pods)
 		for i := 0; i < totalPods; i++ {
 			if checkPodsWithAntiAffinityExist(pods[i], pods) && evictable.IsEvictable(pods[i]) {
-				success, err := podEvictor.EvictPod(ctx, pods[i], node, "InterPodAntiAffinity")
+				success, _, err := podEvictor.EvictPod(ctx, pods[i], node, "InterPodAntiAffinity")
 				if err != nil {
 					klog.ErrorS(err, "Error evicting pod")
 					break

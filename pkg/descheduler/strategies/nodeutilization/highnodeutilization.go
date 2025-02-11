@@ -20,13 +20,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-
 	"sigs.k8s.io/descheduler/pkg/api"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
@@ -34,9 +35,11 @@ import (
 	"sigs.k8s.io/descheduler/pkg/utils"
 )
 
-// HighNodeUtilization evicts pods from under utilized nodes so that scheduler can schedule according to its strategy.
+// HighNodeUtilization evicts pods from underutilized nodes so that scheduler can schedule according to its strategy.
 // Note that CPU/Memory requests are used to calculate nodes' utilization and not the actual resource usage.
 func HighNodeUtilization(ctx context.Context, client clientset.Interface, strategy api.DeschedulerStrategy, nodes []*v1.Node, podEvictor *evictions.PodEvictor, getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc) {
+
+	// check if HighNodeUtilization is set correctly 
 	if err := validateNodeUtilizationParams(strategy.Params); err != nil {
 		klog.ErrorS(err, "Invalid HighNodeUtilization parameters")
 		return
@@ -47,12 +50,14 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 		nodeFit = strategy.Params.NodeFit
 	}
 
+	// get threshold priority
 	thresholdPriority, err := utils.GetPriorityFromStrategyParams(ctx, client, strategy.Params)
 	if err != nil {
 		klog.ErrorS(err, "Failed to get threshold priority from strategy's params")
 		return
 	}
 
+	// validate if the strategy config is valid based on threshold and target treshold set
 	thresholds := strategy.Params.NodeResourceUtilizationThresholds.Thresholds
 	targetThresholds := strategy.Params.NodeResourceUtilizationThresholds.TargetThresholds
 	if err := validateHighUtilizationStrategyConfig(thresholds, targetThresholds); err != nil {
@@ -63,90 +68,121 @@ func HighNodeUtilization(ctx context.Context, client clientset.Interface, strate
 
 	setDefaultForThresholds(thresholds, targetThresholds)
 	resourceNames := getResourceNames(targetThresholds)
+	totalNodes := len(nodes)
+	for i := 0; i < totalNodes; i++ {
+		currentNode := nodes[i]
 
-	sourceNodes, highNodes := classifyNodes(
-		getNodeUsage(nodes, resourceNames, getPodsAssignedToNode),
-		getNodeThresholds(nodes, thresholds, targetThresholds, resourceNames, getPodsAssignedToNode, false),
-		func(node *v1.Node, usage NodeUsage, threshold NodeThresholds) bool {
-			return isNodeWithLowUtilization(usage, threshold.lowResourceThreshold)
-		},
-		func(node *v1.Node, usage NodeUsage, threshold NodeThresholds) bool {
-			if nodeutil.IsNodeUnschedulable(node) {
-				klog.V(2).InfoS("Node is unschedulable", "node", klog.KObj(node))
-				return false
-			}
-			return !isNodeWithLowUtilization(usage, threshold.lowResourceThreshold)
-		})
+		// stop if the total available usage has dropped to zero, then no more pods can be scheduled
+		continueEvictionCond := func(nodeInfo NodeInfo, totalAvailableUsage map[v1.ResourceName]*resource.Quantity) bool {
+		//	for name := range totalAvailableUsage {
+		//		  if totalAvailableUsage[name].CmpInt64(0) < 1 {
+		//			  return false
+		//		  }
+		//	  }
+ 
+			 return true
+		 }
 
-	// log message in one line
-	keysAndValues := []interface{}{
-		"CPU", thresholds[v1.ResourceCPU],
-		"Mem", thresholds[v1.ResourceMemory],
-		"Pods", thresholds[v1.ResourcePods],
-	}
-	for name := range thresholds {
-		if !isBasicResource(name) {
-			keysAndValues = append(keysAndValues, string(name), int64(thresholds[name]))
+		// classifies the nodes into sourceNodes and highNode groups based on resources requested
+		sourceNodes, highNodes := classifyNodes(
+			getNodeUsage(nodes, resourceNames, getPodsAssignedToNode),
+			getNodeThresholds(nodes, thresholds, targetThresholds, resourceNames, getPodsAssignedToNode, false),
+			func(node *v1.Node, usage NodeUsage, threshold NodeThresholds) bool {
+				return isNodeWithLowUtilization(usage, threshold.lowResourceThreshold)
+			},
+			func(node *v1.Node, usage NodeUsage, threshold NodeThresholds) bool {
+				if nodeutil.IsNodeUnschedulable(node) {
+					klog.V(2).InfoS("Node is unschedulable", "node", klog.KObj(node))
+					return false
+				}
+				return !isNodeWithLowUtilization(usage, threshold.lowResourceThreshold)
+			})
+
+
+		// log message in one line
+		keysAndValues := []interface{}{
+			"CPU", thresholds[v1.ResourceCPU],
+			"Mem", thresholds[v1.ResourceMemory],
+			"Pods", thresholds[v1.ResourcePods],
 		}
-	}
-
-	klog.V(1).InfoS("Criteria for a node below target utilization", keysAndValues...)
-	klog.V(1).InfoS("Number of underutilized nodes", "totalNumber", len(sourceNodes))
-
-	if len(sourceNodes) == 0 {
-		klog.V(1).InfoS("No node is underutilized, nothing to do here, you might tune your thresholds further")
-		return
-	}
-	if len(sourceNodes) <= strategy.Params.NodeResourceUtilizationThresholds.NumberOfNodes {
-		klog.V(1).InfoS("Number of nodes underutilized is less or equal than NumberOfNodes, nothing to do here", "underutilizedNodes", len(sourceNodes), "numberOfNodes", strategy.Params.NodeResourceUtilizationThresholds.NumberOfNodes)
-		return
-	}
-	if len(sourceNodes) == len(nodes) {
-		klog.V(1).InfoS("All nodes are underutilized, nothing to do here")
-		return
-	}
-	if len(highNodes) == 0 {
-		klog.V(1).InfoS("No node is available to schedule the pods, nothing to do here")
-		return
-	}
-
-	evictable := podEvictor.Evictable(evictions.WithPriorityThreshold(thresholdPriority), evictions.WithNodeFit(nodeFit))
-
-	// stop if the total available usage has dropped to zero - no more pods can be scheduled
-	continueEvictionCond := func(nodeInfo NodeInfo, totalAvailableUsage map[v1.ResourceName]*resource.Quantity) bool {
-		for name := range totalAvailableUsage {
-			if totalAvailableUsage[name].CmpInt64(0) < 1 {
-				return false
+		for name := range thresholds {
+			if !isBasicResource(name) {
+				keysAndValues = append(keysAndValues, string(name), int64(thresholds[name]))
 			}
 		}
 
-		return true
-	}
+		klog.V(1).InfoS("Criteria for a node below target utilization", keysAndValues...)
+		klog.V(1).InfoS("Number of underutilized nodes", "totalNumber", len(sourceNodes))
 
-	// Sort the nodes by the usage in ascending order
-	sortNodesByUsage(sourceNodes, true)
+		// checks to determinate if descheduling should be conducted
+		// 1. checking if one or more node is underutilized
+		if len(sourceNodes) == 0 {
+			klog.V(1).InfoS("No node is underutilized, nothing to do here, you might tune your thresholds further")
+			return
+		}
+		// 2. check if number of underutilized nodes is less or equal to the minimum underutilized nodes set thrugh the NumberOfNodes paramter in the configmap
+		if len(sourceNodes) <= strategy.Params.NodeResourceUtilizationThresholds.NumberOfNodes {
+			klog.V(1).InfoS("Number of nodes underutilized is less or equal than NumberOfNodes, nothing to do here", "underutilizedNodes", len(sourceNodes), "numberOfNodes", strategy.Params.NodeResourceUtilizationThresholds.NumberOfNodes)
+			return
+		}
+		// 3. check if all nodes are underutilized
+		if len(sourceNodes) == len(nodes) {
+			klog.V(1).InfoS("All nodes are underutilized, nothing to do here")
+			return
+		}
+		// 4. check if overutilized nodes are equal to null 
+		if len(highNodes) == 0 {
+			klog.V(1).InfoS("No node is available to schedule the pods, nothing to do here")
+			return
+		}
+		
+		// check if pods are evictable and can also fit the nodes
+		evictable := podEvictor.Evictable(evictions.WithPriorityThreshold(thresholdPriority), evictions.WithNodeFit(nodeFit))
 
-	// cordon nodes
-	if strategy.Params != nil && strategy.Params.Cordon {
-		for _, node := range sourceNodes {
-			err = cordonNode(ctx, client, node.node)
+		// sort the nodes by the usage in ascending order
+		sortNodesByUsage(sourceNodes, true) 
 
-			if err != nil {
-				klog.ErrorS(err, "Failed to cordon node", "node", klog.KObj(node.node))
+		// check if the currentNode we are on in the range is present in the sourceNode list
+		sliceResult, err := slice(sourceNodes, currentNode)
+		
+		if (err == nil) {
+			
+			// cordon nodes
+			if strategy.Params != nil && strategy.Params.Cordon {
+				// for _, node := range sourceNodes {
+				err = cordonNode(ctx, client, currentNode)
+
+				if err != nil {
+					klog.ErrorS(err, "Failed to cordon node", "node", klog.KObj(currentNode))
+				}
+				// }
 			}
+
+			// start eviction of pods fom the nodes  
+			evictPodsFromSourceNodes(
+				ctx,
+				[]NodeInfo{sliceResult},
+				highNodes,
+				podEvictor,
+				evictable.IsEvictable,
+				resourceNames,
+				"HighNodeUtilization",
+				continueEvictionCond)
+
+			klog.V(1).InfoS("Sleeping for 15 minutes before continuing on the next node")
+			// Sleeping 15 minutes to make sure evicted pods gets fully up before the next drain starts
+			time.Sleep(900 * time.Second)
 		}
 	}
+}
 
-	evictPodsFromSourceNodes(
-		ctx,
-		sourceNodes,
-		highNodes,
-		podEvictor,
-		evictable.IsEvictable,
-		resourceNames,
-		"HighNodeUtilization",
-		continueEvictionCond)
-
+func slice(s []NodeInfo, n *v1.Node) (nodeInfo NodeInfo, err error) {
+	for _, v := range s {
+		if v.node.Name == n.Name {
+			return v, nil
+		}
+	}
+	return NodeInfo{}, fmt.Errorf("Node not found")
 }
 
 func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) error {
@@ -160,8 +196,9 @@ func cordonNode(ctx context.Context, client clientset.Interface, node *v1.Node) 
 	patch.Spec.Unschedulable = true
 
 	patchJson, _ := json.Marshal(patch)
-	return client.NodeV1().RESTClient().Patch(types.MergePatchType).Name(node.Name).Body(patchJson).Do(ctx).Error()
-
+	options := metav1.PatchOptions{}
+	_, error := client.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, patchJson, options)
+	return error
 }
 
 func validateHighUtilizationStrategyConfig(thresholds, targetThresholds api.ResourceThresholds) error {
